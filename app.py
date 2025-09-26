@@ -1,58 +1,75 @@
-from flask import Flask, request, jsonify, render_template
-import json
+from flask import Flask, render_template, request, jsonify
 import requests
+import json
+import os
 from datetime import datetime
 
 app = Flask(__name__)
+
 CHAT_FILE = "chat_history.json"
+PROMPT_FILE = "prompt.json"
 
-# Load chat history
-def load_chat():
-    with open(CHAT_FILE, "r") as f:
-        return json.load(f)
-
-# Save chat history
-def save_chat(chat):
-    with open(CHAT_FILE, "w") as f:
-        json.dump(chat, f, indent=4)
-
-# Function to call Ollama
-def ask_ollama(prompt):
-    url = "http://localhost:11434/v1/llm"
-    payload = {
-        "model": "deepseek-r1:7b",  # your local model
-        "prompt": prompt
-    }
-    response = requests.post(url, json=payload)
-    return response.json().get("response", "No response from Ollama")
-
+# Home route
 @app.route("/")
 def home():
     return render_template("index.html")
 
+# Chat route
 @app.route("/chat", methods=["POST"])
 def chat():
-    user_input = request.json.get("message")
-    if not user_input:
-        return jsonify({"error": "No message provided"}), 400
+    user_message = request.json.get("message", "")
 
-    chat_history = load_chat()
+    # Load existing chat history
+    if os.path.exists(CHAT_FILE):
+        with open(CHAT_FILE, "r") as f:
+            try:
+                history = json.load(f)
+            except json.JSONDecodeError:
+                history = []
+    else:
+        history = []
 
-    # Include last 5 messages as context for continuity
-    context = "\n".join([f"User: {c['user']}\nBot: {c['bot']}" for c in chat_history[-5:]])
-    full_prompt = context + f"\nUser: {user_input}\nBot:"
+    # Build conversation context (last 5 exchanges)
+    history_text = ""
+    for turn in history[-5:]:
+        history_text += f"User: {turn['user']}\nBot: {turn['bot']}\n"
+    history_text += f"User: {user_message}\nBot:"
 
-    bot_response = ask_ollama(full_prompt)
+    # Save latest prompt separately
+    with open(PROMPT_FILE, "w") as f:
+        json.dump({"prompt": history_text}, f, indent=2)
 
-    # Append new conversation to JSON
-    chat_history.append({
+    # Send to Ollama
+    payload = {
+        "model": "deepseek-r1:7b",
+        "prompt": history_text
+    }
+
+    bot_response = ""
+    try:
+        with requests.post("http://127.0.0.1:11434/api/generate",
+                           json=payload, stream=True) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if line:
+                    data = json.loads(line.decode("utf-8"))
+                    if "response" in data:
+                        bot_response += data["response"]
+    except Exception as e:
+        bot_response = f"[Error connecting to Ollama: {e}]"
+
+    # Save chat history
+    history.append({
         "timestamp": datetime.now().isoformat(),
-        "user": user_input,
+        "user": user_message,
         "bot": bot_response
     })
 
-    save_chat(chat_history)
+    with open(CHAT_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
     return jsonify({"response": bot_response})
+
 
 if __name__ == "__main__":
     app.run(debug=True)

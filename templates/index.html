@@ -2,31 +2,54 @@
 <html>
 <head>
   <title>Ollama Chatbot</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #chatbox { height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
+    #inputArea { margin-top: 10px; }
+    #userInput { width: 70%; padding: 5px; }
+    button { padding: 5px 10px; }
+    p { margin: 5px 0; }
+  </style>
 </head>
 <body>
   <h1>Chatbot</h1>
-  <div id="chatbox" style="height:300px; overflow:auto; border:1px solid #ccc; padding:10px;"></div>
-  <input type="text" id="userInput" placeholder="Type a message..." style="width:70%;">
-  <button onclick="sendMessage()">Send</button>
+  <div id="chatbox"></div>
+  <div id="inputArea">
+    <input type="text" id="userInput" placeholder="Type a message...">
+    <button id="sendBtn">Send</button>
+  </div>
 
   <script>
+    document.getElementById("sendBtn").addEventListener("click", sendMessage);
+    document.getElementById("userInput").addEventListener("keypress", function(e) {
+      if (e.key === "Enter") sendMessage();
+    });
+
     async function sendMessage() {
-      const message = document.getElementById("userInput").value;
-      if(!message) return;
+      const inputField = document.getElementById("userInput");
+      const message = inputField.value.trim();
+      if (!message) return;
 
-      const res = await fetch("/chat", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({message})
-      });
-      const data = await res.json();
-
+      // Show user message immediately
       const chatbox = document.getElementById("chatbox");
       chatbox.innerHTML += `<p><b>You:</b> ${message}</p>`;
-      chatbox.innerHTML += `<p><b>Bot:</b> ${data.response}</p>`;
       chatbox.scrollTop = chatbox.scrollHeight;
 
-      document.getElementById("userInput").value = "";
+      inputField.value = "";
+
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({message})
+        });
+
+        const data = await res.json();
+        chatbox.innerHTML += `<p><b>Bot:</b> ${data.response}</p>`;
+        chatbox.scrollTop = chatbox.scrollHeight;
+      } catch (err) {
+        chatbox.innerHTML += `<p style="color:red;"><b>Error:</b> Could not reach backend</p>`;
+      }
     }
   </script>
 </body>
