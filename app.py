@@ -2,14 +2,16 @@ from flask import Flask, render_template, request, jsonify
 import requests
 import json
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 
-CHAT_FILE = "chat_history.json"
 PROMPT_FILE = "prompt.json"
+CHAT_FILE = "chat_history.json"
+RESPONSE_FILE = "response.json"
 
-# Home route
+MODEL = "gemma3:4b"  # Change model here if needed
+
+# Home page
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -17,36 +19,38 @@ def home():
 # Chat route
 @app.route("/chat", methods=["POST"])
 def chat():
-    user_message = request.json.get("message", "")
+    user_input = request.json.get("message", "").strip()
+    if not user_input:
+        return jsonify({"response": ""})
 
-    # Load existing chat history
+    # Save user input to prompt.json
+    with open(PROMPT_FILE, "w") as f:
+        json.dump({"prompt": user_input}, f, indent=2)
+
+    # Load chat history
     if os.path.exists(CHAT_FILE):
         with open(CHAT_FILE, "r") as f:
             try:
-                history = json.load(f)
+                chat_history = json.load(f)
             except json.JSONDecodeError:
-                history = []
+                chat_history = []
     else:
-        history = []
+        chat_history = []
 
-    # Build conversation context (last 5 exchanges)
-    history_text = ""
-    for turn in history[-5:]:
-        history_text += f"User: {turn['user']}\nBot: {turn['bot']}\n"
-    history_text += f"User: {user_message}\nBot:"
+    # Load prompt.json
+    with open(PROMPT_FILE, "r") as f:
+        prompt_data = json.load(f)
+    prompt_text = prompt_data.get("prompt", "")
 
-    # Save latest prompt separately
-    with open(PROMPT_FILE, "w") as f:
-        json.dump({"prompt": history_text}, f, indent=2)
-
-    # Send to Ollama
+    # Build payload for Ollama
     payload = {
-        "model": "deepseek-r1:7b",
-        "prompt": history_text
+        "model": MODEL,
+        "prompt": prompt_text
     }
 
     bot_response = ""
     try:
+        # Stream response from Ollama
         with requests.post("http://127.0.0.1:11434/api/generate",
                            json=payload, stream=True) as r:
             r.raise_for_status()
@@ -58,15 +62,18 @@ def chat():
     except Exception as e:
         bot_response = f"[Error connecting to Ollama: {e}]"
 
-    # Save chat history
-    history.append({
-        "timestamp": datetime.now().isoformat(),
-        "user": user_message,
-        "bot": bot_response
-    })
+    # Update response.json
+    with open(RESPONSE_FILE, "w") as f:
+        json.dump({"response": bot_response}, f, indent=2)
 
+    # Update chat_history.json
+    chat_history.append({"prompt": prompt_text, "response": bot_response})
     with open(CHAT_FILE, "w") as f:
-        json.dump(history, f, indent=2)
+        json.dump(chat_history, f, indent=2)
+
+    # Clear prompt.json
+    with open(PROMPT_FILE, "w") as f:
+        json.dump({"prompt": ""}, f, indent=2)
 
     return jsonify({"response": bot_response})
 
